@@ -1,0 +1,1521 @@
+---
+title: "Group Task"
+author: "Pablo Romero (DNI: 32091422M), Jorge Ramos (DNI: 73214156G), María Carda (DNI: 53791322A), Irene García-Espantaleón (DNI: 50778532Y), Andrea Rivera (DNI: 47551425Y) and Rocío Galeote (DNI: 02312800N)"
+format:
+  revealjs:
+    theme: [style.scss_slides]
+    embed-resources: true
+    toc: false
+    toc-location: right
+    toc-title: Index
+---
+
+### Required packages and data
+
+```{r}
+#| message: false
+#| eval: true
+#| echo: true
+#| code-fold: true
+
+rm(list = ls()) # Remove old variables
+
+packages = c("tidyverse", "tidyr","dplyr", "stringr", "ggplot2", "ggalluvial",
+             "lubridate","glue", "ggrepel", "forcats")
+
+package.check <- lapply(packages,
+                        FUN = function(x){
+                          if (!require(x,character.only = TRUE)){
+                            install.packages(x,dependencies = TRUE)
+                            library(x, character.only = TRUE)
+                          }
+                        }
+                        
+)
+
+```
+
+```{r}
+#| message: false
+#| eval: true
+#| echo: true
+#| code-fold: true
+
+election_data <- read_csv(file = "./data/datos_elecciones_brutos.csv")
+cod_mun <- read_csv(file = "./data/cod_mun.csv")
+surveys <- read_csv(file = "./data/historical_surveys.csv")
+abbrev <- read_csv(file = "./data/siglas.csv")
+```
+
+------------------------------------------------------------------------
+
+## Preparing the data
+
+The practice will be based on the **electoral data archives** below, compiling data on elections to the Spanish Congress of Deputies from 2008 to the present, as well as surveys, municipalities codes and abbreviations. First steps:
+
+-   `Transform election_data and surveys databases to tidydata.`
+-   `Discard polls that do not meet the base requirements.`
+-   `Group the different party strands into their corresponding parent party.`
+-   `Group those parties that do not fit into any of the above into others.`
+-   `Use abbrev to stipulate party acronyms in election_data.`
+-   `Homogenize data with respect to reality.`
+-   `Distinguish between the two general elections in 2019.`
+
+------------------------------------------------------------------------
+
+`Make "tidy" the "surveys" and "election_data" dataset and group the unique values of "abbrev":`
+
+```{r, echo=TRUE}
+
+surveys_tidy <- surveys |> 
+  filter(date_elec >= 2008) |>   
+pivot_longer(cols = 11:ncol(surveys),  
+               names_to = "partido",  
+               values_to = "voto_intencion") |> 
+  filter(
+    date_elec >= 2008,                                 
+    !exit_poll,                                        
+    size >= 750 & !is.na(size),                        
+    as.numeric(field_date_to - field_date_from) >= 1   
+  )
+
+election_data_tidy <- election_data %>%
+  dplyr::select(anno, mes, tipo_eleccion, codigo_ccaa, codigo_provincia, codigo_municipio,
+         codigo_distrito_electoral, numero_mesas, censo, participacion_1, participacion_2,
+         votos_blancos, votos_nulos, 15:ncol(election_data)) %>%  
+  pivot_longer(cols = 15:ncol(.),  
+               names_to = "partido",
+               values_to = "votos") 
+
+abbrev_unique <- abbrev |> 
+  group_by(denominacion) |> 
+  summarise(siglas = first(siglas), .groups = "drop")
+
+election_data_tidy <- election_data_tidy |> 
+  left_join(abbrev_unique, by = c("partido" = "denominacion"))
+
+```
+
+------------------------------------------------------------------------
+
+After this first step, we noticed that the name of the parties changes between elections, so we ran a code to standarize those names to only one per political party.
+
+`Example:`
+
+```{r, echo=TRUE}
+
+partido_ciudadanos <- election_data_tidy |> 
+  filter(str_detect(str_to_lower(partido), "ciudadanos")) |> 
+  distinct(partido)
+
+partido_ciudadanos
+
+```
+
+------------------------------------------------------------------------
+
+```{r, echo=TRUE}
+
+election_data_tidy <- election_data_tidy |> 
+  mutate(
+    partido = if_else(
+      partido %in% c(
+        "CIUDADANOS-PARTIDO DE LA CIUDADANIA",
+        "CIUDADANOS PARTIDO DE LA CIUDADANIA",
+        "CIUDADANOS-PARTIDO DE LA CIUDADANÍA",
+        "CIUDADANOS PARTIDO DE LA CIUDADANÍA",
+        "CIUDADANOS-PARTIDO DE LA CIUDADANÍA (C's)",
+        "CIUDADANOS, PARTIDO DE LA CIUDADANÍA"
+      ),
+      "CIUDADANOS-PARTIDO DE LA CIUDADANIA",
+      partido
+    )
+  )
+
+election_data_tidy <- election_data_tidy |> 
+  mutate(
+    partido = if_else(
+      partido %in% c(
+        "PARTIDO POPULAR",
+        "PARTIT POPULAR/PARTIDO POPULAR",
+        "UNION DEL PUEBLO NAVARRO EN COALICION CON EL PARTIDO POPULAR",
+        "PARTIDO POPULAR/PARTIT POPULAR",
+        "PARTIDO POPULAR-EXTREMADURA UNIDA",
+        "PARTIDO POPULAR EN COALICIÓN CON EL PARTIDO ARAGONÉS",
+        "UNIÓN DEL PUEBLO NAVARRO EN COALICIÓN CON EL PARTIDO POPULAR",
+        "PARTIDO POPULAR (PP)",
+        "PARTIDO POPULAR EN COALICIÓN CON EL PARTIDO ARAGON",
+        "PARTIDO POPULAR-FORO",
+        "PARTIT POPULAR-PARTIDO POPULAR",
+        "PARTIDO POPULAR - FORO",
+        "PARTIDO POPULAR / PARTIT POPULAR"
+      ),
+      "PARTIDO POPULAR",
+      partido
+    )
+  )
+
+election_data_tidy <- election_data_tidy |> 
+  mutate(
+    partido = if_else(
+      partido %in% c(
+        "CONVERGENCIA I UNIO",
+        "CONVERGÈNCIA I UNIÓ",
+        "CONVERGÈNCIA i UNIÓ"
+      ),
+      "CONVERGENCIA I UNIO",
+      partido
+    )
+  )
+
+election_data_tidy <- election_data_tidy |> 
+  mutate(
+    partido = if_else(
+      partido %in% c(
+        "PARTIDO SOCIALISTA DE EUSKADI-EUSKADIKO EZKERRA",
+        "PARTIDO SOCIALISTA OBRERO ESPAÑOL",
+        "PARTIDO DOS SOCIALISTAS DE GALICIA-PARTIDO SOCIALISTA OBRERO ESPAÑOL",
+        "PARTIDO SOCIALISTA DE EUSKADI-EUSKADIKO EZKERRA (PSOE)",
+        "PARTIDO SOCIALISTA OBRERO ESPAÑOL DE ANDALUCIA",
+        "PARTIDO DOS SOCIALISTAS DE GALICIA-PSOE",
+        "PARTIDO DOS SOCIALISTAS DE GALICIA - PSOE",
+        "PARTIDO DOS SOCIALISTAS DE GALICIA - PARTIDO SOCIALISTA OBRERO ESPAÑOL",
+        "PARTIDO SOCIALISTA DE EUSKADI-EUSKADIKO EZKERRA (P",
+        "PARTIDO SOCIALISTA OBRERO ESPAÑOL-NUEVA CANARIAS",
+        "PARTIDO SOCIALISTA DE EUSKADI-EUSKADIKO EZKERRA(PSOE)",
+        "PARTIT SOCIALISTA OBRER ESPANYOL",
+        "PARTIDO DOS SOCIALISTAS DE GALICIA-PARTIDO SOCIALI"
+      ),
+      "PARTIDO SOCIALISTA OBRERO ESPAÑOL",
+      partido
+    )
+  )
+
+election_data_tidy <- election_data_tidy |> 
+  mutate(
+    partido = if_else(
+      partido %in% c(
+        "EUZKO ALDERDI JELTZALEA-PARTIDO NACIONALISTA VASCO",
+        "PARTIDO NACIONALISTA VASCO"
+      ),
+      "EUZKO ALDERDI JELTZALEA-PARTIDO NACIONALISTA VASCO",
+      partido
+    )
+  )
+
+election_data_tidy <- election_data_tidy |> 
+  mutate(
+    partido = if_else(
+      partido %in% c(
+        "IZQUIERDA UNIDA-ALTERNATIVA",
+        "ESQUERRA UNIDA DEL PAIS VALENCIA-IZQUIERDA REPUBLICANA: ESQUERRA UNIDA I REPUBLICANA",
+        "IZQUIERDA UNIDA LOS VERDES-CONVOCATORIA POR ANDALUCIA - ALTERNATIVA",
+        "ESQUERRA UNIDA - ELS VERDS",
+        "INICIATIVA PER CATALUNYA VERDS-ESQUERRA UNIDA I ALTERNATIVA",
+        "IZQUIERDA UNIDA LOS VERDES CONVOCATORIA POR ANDALUCIA-ALTERNATIVA",
+        "ESQUERDA UNIDA-IZQUIERDA UNIDA-ALTERNATIVA",
+        "IZQUIERDA UNIDA LOS VERDES-CONVOCATORIA POR ANDALUCIA-ALTERNATIVA",
+        "INICIATIVA PER CATALUNYA VERDS - ESQUERRA UNIDA I ALTERNATIVA",
+        "IZQUIERDA UNIDA COMUNIDAD DE MADRID-ALTERNATIVA",
+        "IZQUIERDA UNIDA DE LA REGION DE MURCIA-ALTERNATIVA",
+        "IZQUIERDA UNIDA DE NAVARRA - NAFARROAKO EZKER BATUA - ALTERNATIVA",
+        "IZQUIERDA UNIDA - BLOQUE POR ASTURIES - LOS VERDES",
+        "IZQUIERDA UNIDA CANARIA-ALTERNATIVA",
+        "ESQUERRA UNIDA DEL PAIS VALENCIA-IZQUIERDA REPUBLICANA:ESQUERRA UNIDA I REPUBLICANA",
+        "IZQUIERDA UNIDA DE CEUTA",
+        "IZQUIERDA UNIDA-LOS VERDES: LA IZQUIERDA PLURAL/EZKER ANITZA (IU-LV)",
+        "IZQUIERDA UNIDA DE CASTILLA-LA MANCHA-LOS VERDES: LA IZQUIERDA PLURAL",
+        "ESQUERRA UNIDA DEL PAIS VALENCIA-LOS VERDES: L'ESQUERRA PLURAL",
+        "IZQUIERDA UNIDA LOS VERDES-CONVOCATORIA POR ANDALUCÍA: LA IZQUIERDA PLURAL(IULV-CA)",
+        "IZQUIERDA UNIDA DE CASTILLA Y LEON: LA IZQUIERDA PLURAL (IUCL)",
+        "IZQUIERDA UNIDA VERDES-SOCIALISTAS INDEPENDIENTES DE EXTREMADURA: LA IZQUIERDA PLURAL",
+        "ESQUERRA UNIDA ILLES BALEARS: LA IZQUIERDA PLURAL",
+        "INICIATIVA PER CATALUNYA VERDS-ESQUERRA UNIDA I ALTERNATIVA: L'ESQUERRA PLURAL",
+        "IZQUIERDA UNIDA DE CASTILLA Y LEÓN: LA IZQUIERDA PLURAL",
+        "IZQUIERDA UNIDA LOS VERDES-CONVOCATORIA POR ANDALUCÍA: LA IZQUIERDA PLURAL",
+        "ESQUERRA UNIDA PAÍS VALENCIÀ-ELS VERDS: L'ESQUERRA PLURAL",
+        "ESQUERDA UNIDA-OS VERDES: A ESQUERDA PLURAL",
+        "INICIATIVA PER CATALUNYA VERDS-ESQUERRA UNIDA i ALTERNATIVA: L'ESQUERRA PLURAL",
+        "IZQUIERDA UNIDA-LOS VERDES: LA IZQUIERDA PLURAL/EZKER ANITZA",
+        "CHUNTA ARAGONESISTA-IZQUIERDA UNIDA, LA IZQUIERDA DE ARAGÓN: LA IZQUIERDA PLURAL",
+        "IZQUIERDA UNIDA-LA IZQUIERDA PLURAL",
+        "IZQUIERDA UNIDA-LOS VERDES: LA IZQUIERDA PLURAL",
+        "IZQUIERDA UNIDA-VERDES DE LA REGION DE MURCIA: LA IZQUIERDA PLURAL",
+        "IZQUIERDA UNIDA DE ASTURIAS-IZQUIERDA XUNIDA D'ASTURIES:LA IZQUIERDA PLURAL",
+        "IZQUIERDA UNIDA CANARIA-INICIATIVA POR EL HIERRO-LOS VERDES: LA IZQUIERDA PLURAL",
+        "IZQUIERDA UNIDA DE CANTABRIA: LA IZQUIERDA PLURAL",
+        "CHUNTA ARAGONESISTA-IZQUIERDA UNIDA, La Izquierda de Aragón: La Izquierda Plural",
+        "IZQUIERDA UNIDA - PARTIDO DEMOCRÁTICO Y SOCIAL DE CEUTA: LA IZQUIERDA PLURAL",
+        "UNIDAD POPULAR- ORAIN BATERA:EZKER ANITZA-IZQUIERD",
+        "UNIDAD POPULAR: IZQUIERDA UNIDA, UNIDAD POPULAR EN",
+        "UNITAT POPULAR:ESQUERRA UNIDA DEL PAÍS VALENCIÀ, U",
+        "UNIDAD POPULAR: IZQUIERDA UNIDA LOS VERDES-CONVOCA",
+        "UNITAT POPULAR BALEARS: IZQUIERDA UNIDA, UNIDAD PO",
+        "UNIDAD POPULAR: IZQUIERDA UNIDA-UNIDAD POPULAR EN",
+        "UNITAT POPULAR: ESQUERRA UNIDA DEL PAÍS VALENCIÀ,",
+        "UNIDAD POPULAR: IZQUIERDA UNIDA LOS VERDES - CONVO",
+        "UNIDAD POPULAR-ORAIN BATERA:EZKER ANITZA-IZQUIERDA",
+        "UNIDAD POPULAR EN ARAGÓN: IZQUIERDA UNIDA, CHUNTA",
+        "UNIDAD POPULAR: UNIDAD POPULAR EN COMÚN, IZQUIERDA",
+        "UNIDAD POPULAR-ORAIN BATERA:IZQUIERDA UNIDA, BATZA",
+        "UNIDAD POPULAR: IZQUIERDA UNIDA. UNIDAD POPULAR E",
+        "UNIDAD POPULAR: IZQUIERDA UNIDA CANARIA, UNIDAD PO",
+        "UNIDAD POPULAR-IZQUIERDA UNIDA",
+        "EZKER BATUA-BERDEAK-ALTERNATIVA",
+        "PODEMOS-AHAL DUGU",
+        "PODEMOS",
+        "COMPROMÍS-PODEMOS-ÉS EL MOMENT", 
+        "PODEMOS-Ahora Alto Aragón en Común",
+        "PODEMOS/AHAL DUGU", 
+        "COMPROMÍS-PODEMOS-EUPV: A LA VALENCIANA", 
+        "EN COMÚ PODEM",
+        "EN COMÚ PODEM - GUANYEM EL CANVI",
+        "UNIDOS PODEMOS/ELKARREKIN AHAL DUGU",
+        "UNIDOS PODEMOS", 
+        "UNIDOS PODEMOS POR ANDALUCÍA",
+        "UNITS PODEM MÉS", 
+        "UNIDOS PODEMOS EN ALTO ARAGÓN",
+        "UNIDOS PODEMOS-ELKARREKIN AHAL DUGU", 
+        "UNIDOS PODEMOS/XUNÍOS PODEMOS", "UNIDOS PODEMOS EN ARAGÓN", 
+        "ELKARREKIN PODEMOS-UNIDAS PODEMOS", "UNIDAS PODEMOS", 
+        "UNIDAS PODEMOS-UNIDES PODEM", "EN COMÚN-UNIDAS PODEMOS", 
+        "UNIDAS PODEMOS-ALTOARAGÓN EN COMÚN", "UNIDAS PODEMOS-XUNIES PODEMOS", 
+        "UNIDAS PODEMOS-XUNÍES PODEMOS"
+      ),
+      "UNIDAS PODEMOS", partido
+    )
+  )
+
+election_data_tidy <- election_data_tidy |> 
+  mutate(
+    partido = if_else(
+      partido %in% c("BLOQUE NACIONALISTA GALEGO",
+                     "BLOQUE NACIONALISTA GALLEGO"),
+      "BLOQUE NACIONALISTA GALEGO", partido
+    )
+  )
+
+election_data_tidy <- election_data_tidy |> 
+  mutate(
+    partido = if_else(
+      partido %in% c("ESQUERRA REPUBLICANA DE CATALUNYA", "ESQUERRA REPUBLICANA", 
+                     "ESQUERRA REPUBLICANA DE CATALUNYA-CATALUNYA SÍ", 
+                     "ESQUERRA REPUBLICANA/CATALUNYA SÍ", 
+                     "ESQUERRA REPUBLICANA DE CATALUNYA-SOBIRANISTES"),
+      "ESQUERRA REPUBLICANA DE CATALUNYA", partido
+    )
+  )
+
+election_data_tidy <- election_data_tidy |> 
+  mutate(
+    partido = if_else(
+      partido %in% c("EH-BILDU", "EUSKAL HERRIA BILDU", "ARALAR", 
+                     "PARTIDO POLITICO ARALAR", "AMAIUR", "NAFARROA BAI", 
+                     "GEROA BAI", "ONGI ETORRI", "SORTU", "EUSKO ALKARTASUNA", 
+                     "ALTERNATIBA", "EUSKAL HERRIA"),
+      "EUSKAL HERRIA BILDU", partido
+    )
+  )
+
+election_data_tidy <- election_data_tidy |> 
+  mutate(
+    partido = if_else(
+      partido %in% c("MÁS PAÍS", "MÁS PAÍS-ANDALUCÍA", "MÁS PAÍS-EQUO", 
+                     "MÁS PAÍS-CANDIDATURA ECOLOGISTA",
+                     "MÁS PAÍS-CHUNTA ARAGONESISTA-EQUO"),
+      "MÁS PAÍS", partido
+    )
+  )
+
+election_data_tidy <- election_data_tidy |> 
+  select(-siglas)
+
+partidos_excluidos <- c(
+  "CIUDADANOS-PARTIDO DE LA CIUDADANIA", "PARTIDO POPULAR", "CONVERGENCIA I UNIO", 
+  "PARTIDO SOCIALISTA OBRERO ESPAÑOL",
+  "EUZKO ALDERDI JELTZALEA-PARTIDO NACIONALISTA VASCO",
+  "BLOQUE NACIONALISTA GALEGO", "UNIDAS PODEMOS",
+  "ESQUERRA REPUBLICANA DE CATALUNYA", 
+  "EUSKAL HERRIA BILDU", "MÁS PAÍS", "VOX"
+)
+
+election_data_tidy <- election_data_tidy |> 
+  mutate(
+    partido = if_else(!partido %in% partidos_excluidos, "OTHERS", partido),
+  ) |> 
+  group_by(anno, mes, tipo_eleccion, codigo_ccaa, codigo_provincia,
+           codigo_municipio, codigo_distrito_electoral, numero_mesas,
+           censo, participacion_1, participacion_2, votos_blancos,
+           votos_nulos, votos_candidaturas, partido) |> 
+  summarise(votos = sum(votos, na.rm = TRUE), .groups = "drop")
+
+election_data_tidy <- election_data_tidy |> 
+  left_join(abbrev_unique |>  select(denominacion, siglas), 
+            by = c("partido" = "denominacion"))
+
+sapply(election_data_tidy, class)
+
+```
+
+------------------------------------------------------------------------
+
+To verify the work we have just done, we check that the NAs in `"siglas"` are only found when `"partido" = others`:
+
+```{r, echo=TRUE}
+
+na_counts <- election_data_tidy |> 
+  summarise(across(everything(), ~ sum(is.na(.)), .names = "na_{.col}"))
+
+na_counts
+
+mismatched_rows <- election_data_tidy |> 
+  filter(is.na(siglas) & partido != "OTHERS")
+
+if (nrow(mismatched_rows) > 0) {
+  print("Rows where 'siglas' is NA but 'partido' is not 'OTHER':")
+  print(mismatched_rows)
+} else {
+  print("No mismatched rows found. All NAs in 'siglas' correspond to 'OTHER' in 'partido'.")
+}
+```
+
+------------------------------------------------------------------------
+
+To be able to analyze the geographical dimension of the electoral data, the table `cod_mun` was made available. However, we realized that the codes for some CCAA in this table did not exactly match the ones in any table found online. We used `{datapasta}` to paste a table from the INE which was close enough (<https://www.ine.es/daco/daco42/codmun/cod_ccaa_provincia.htm>).
+
+```{r, echo=TRUE}
+#| message: false
+#| eval: true
+#| echo: true
+#| code-fold: true
+
+cod_ine <- tibble::tribble(
+  ~CODAUTO,           ~Comunidad.Autónoma, ~CPRO,               ~Provincia,
+      "01",                   "Andalucía",  "04",                "Almería",
+      "01",                   "Andalucía",  "11",                  "Cádiz",
+      "01",                   "Andalucía",  "14",                "Córdoba",
+      "01",                   "Andalucía",  "18",                "Granada",
+      "01",                   "Andalucía",  "21",                 "Huelva",
+      "01",                   "Andalucía",  "23",                   "Jaén",
+      "01",                   "Andalucía",  "29",                 "Málaga",
+      "01",                   "Andalucía",  "41",                "Sevilla",
+      "02",                      "Aragón",  "22",                 "Huesca",
+      "02",                      "Aragón",  "44",                 "Teruel",
+      "02",                      "Aragón",  "50",               "Zaragoza",
+      "03",     "Asturias, Principado de",  "33",               "Asturias",
+      "04",              "Balears, Illes",  "07",         "Balears, Illes",
+      "05",                    "Canarias",  "35",            "Palmas, Las",
+      "05",                    "Canarias",  "38", "Santa Cruz de Tenerife",
+      "06",                   "Cantabria",  "39",              "Cantabria",
+      "07",             "Castilla y León",  "05",                  "Ávila",
+      "07",             "Castilla y León",  "09",                 "Burgos",
+      "07",             "Castilla y León",  "24",                   "León",
+      "07",             "Castilla y León",  "34",               "Palencia",
+      "07",             "Castilla y León",  "37",              "Salamanca",
+      "07",             "Castilla y León",  "40",                "Segovia",
+      "07",             "Castilla y León",  "42",                  "Soria",
+      "07",             "Castilla y León",  "47",             "Valladolid",
+      "07",             "Castilla y León",  "49",                 "Zamora",
+      "08",          "Castilla-La Mancha",  "02",               "Albacete",
+      "08",          "Castilla-La Mancha",  "13",            "Ciudad Real",
+      "08",          "Castilla-La Mancha",  "16",                 "Cuenca",
+      "08",          "Castilla-La Mancha",  "19",            "Guadalajara",
+      "08",          "Castilla-La Mancha",  "45",                 "Toledo",
+      "09",                    "Cataluña",  "08",              "Barcelona",
+      "09",                    "Cataluña",  "17",                 "Girona",
+      "09",                    "Cataluña",  "25",                 "Lleida",
+      "09",                    "Cataluña",  "43",              "Tarragona",
+      "10",        "Comunitat Valenciana",  "03",       "Alicante/Alacant",
+      "10",        "Comunitat Valenciana",  "12",     "Castellón/Castelló",
+      "10",        "Comunitat Valenciana",  "46",      "Valencia/València",
+      "11",                 "Extremadura",  "06",                "Badajoz",
+      "11",                 "Extremadura",  "10",                "Cáceres",
+      "12",                     "Galicia",  "15",              "Coruña, A",
+      "12",                     "Galicia",  "27",                   "Lugo",
+      "12",                     "Galicia",  "32",                "Ourense",
+      "12",                     "Galicia",  "36",             "Pontevedra",
+      "13",        "Madrid, Comunidad de",  "28",                 "Madrid",
+      "14",           "Murcia, Región de",  "30",                 "Murcia",
+      "15", "Navarra, Comunidad Foral de",  "31",                "Navarra",
+      "16",                  "País Vasco",  "01",            "Araba/Álava",
+      "16",                  "País Vasco",  "48",                "Bizkaia",
+      "16",                  "País Vasco",  "20",               "Gipuzkoa",
+      "17",                   "Rioja, La",  "26",              "Rioja, La"
+  )
+```
+
+------------------------------------------------------------------------
+
+Afterwards, we customized the column names and manually added the code info on Ceuta and Melilla, which could not be pasted through the function because there was another row with only one column above them, called "Ciudades autónomas", that was stopping it.
+
+```{r, echo=TRUE}
+#| message: false
+#| eval: true
+#| echo: true
+#| code-fold: true
+
+cod_ine <- cod_ine |> 
+  rename(
+    codigo_ccaa = CODAUTO,
+    ccaa = Comunidad.Autónoma,
+    codigo_provincia = CPRO,
+    provincia = Provincia
+  ) |> 
+ bind_rows(
+  tibble(codigo_ccaa = "18", ccaa = "Ceuta", codigo_provincia = "51",
+         provincia = "Ceuta"),
+  tibble(codigo_ccaa = "19", ccaa = "Melilla", codigo_provincia = "52",
+         provincia = "Melilla")
+)
+```
+
+------------------------------------------------------------------------
+
+We then used this code to check the class of the variables. We observe that the key columns are the same class across all tables, which will facilitate the join.
+
+```{r, echo=TRUE}
+#| message: false
+#| eval: true
+#| echo: true
+#| code-fold: true
+
+sapply(cod_ine, class)
+sapply(election_data_tidy, class)
+sapply(cod_mun, class)
+```
+
+------------------------------------------------------------------------
+
+We used a code like this with some easy municipalities we knew the name and the CCAA of, in order to check the correspondence between the two tables.
+
+```{r, echo=TRUE}
+#| message: false
+#| eval: true
+#| echo: true
+#| code-fold: true
+
+cod_mun |> 
+  filter(municipio == "Lugo") |> # for example
+  pull(cod_mun)
+```
+
+We concluded that:
+
+-   Andalucía, Aragón, Asturias, Baleares, Cantabria, Cataluña, Ceuta and Melilla share the same code between the two tables.
+-   The two Castillas are interchanged: Castilla y León is 7 in the INE table and 8 in our elections database. Castilla-La Mancha is 8 in the INE and 7 in our database.
+-   Comunidad Valenciana is 10 in the INE and 17 in our database.
+-   Extremadura is 11 in the INE and 10 in our database.
+-   Galicia is 12 in the INE and 11 in our database.
+-   Madrid is 13 in the INE and 12 in our database.
+
+------------------------------------------------------------------------
+
+-   Murcia is 14 in INE, 15 in our database.
+-   Navarra is 15 in INE, 13 in our database.
+-   País Vasco is 16 in INE, 14 in our database.
+-   La Rioja is 17 in INE, 16 in our database.
+
+```{r, echo=TRUE}
+#| message: false
+#| eval: true
+#| echo: true
+#| code-fold: true
+
+cod_ine <- cod_ine |> 
+  mutate(codigo_ccaa = case_when(
+    codigo_ccaa == "07" ~ "08", # Castilla y León
+    codigo_ccaa == "08" ~ "07", # Castilla-La Mancha
+    codigo_ccaa == "10" ~ "17", # Comunidad Valenciana
+    codigo_ccaa == "11" ~ "10", # Extremadura
+    codigo_ccaa == "12" ~ "11", # Galicia
+    codigo_ccaa == "13" ~ "12", # Madrid
+    codigo_ccaa == "14" ~ "15", # Murcia
+    codigo_ccaa == "15" ~ "13", # Navarra
+    codigo_ccaa == "16" ~ "14", # País Vasco
+    codigo_ccaa == "17" ~ "16", # La Rioja
+    TRUE ~ codigo_ccaa  # Keep the value of codigo_ccaa for the rest of the CCAA
+  )) |> 
+  mutate(ccaa = sub(",.*", "", ccaa))
+```
+
+------------------------------------------------------------------------
+
+We used this to make the codes between the cod_ine and cod_mun table match, and we also simplified the names of the CCAA (the code used subtracts anything after the comma for long names).
+
+```{r, echo=TRUE}
+#| message: false
+#| eval: true
+#| echo: true
+#| code-fold: true
+
+
+election_data_tidy <- election_data_tidy |> 
+  left_join(cod_ine, by = c("codigo_ccaa" = "codigo_ccaa", "codigo_provincia" = "codigo_provincia"))
+```
+
+We split the variable cod_mun into the three different codes it contains, to be able to do the left join (because some municipalities from different CCAA and province share the same codigo_municipio).
+
+```{r, echo=TRUE}
+#| message: false
+#| eval: true
+#| echo: true
+#| code-fold: true
+
+
+cod_mun <- cod_mun |> 
+  separate(cod_mun, into = c("codigo_ccaa", "codigo_provincia", "codigo_municipio"), sep = "-", remove = FALSE)
+
+election_data_tidy <- election_data_tidy |> 
+  left_join(cod_mun, by = c("codigo_ccaa", "codigo_provincia", "codigo_municipio"))
+```
+
+------------------------------------------------------------------------
+
+We then used this code to check if there were any NAs resulting from the joins.
+
+```{r, echo=TRUE}
+#| message: false
+#| eval: true
+#| echo: true
+#| code-fold: true
+
+
+colSums(is.na(election_data_tidy))
+```
+
+---
+
+It seems like the tables joined nicely, so now our dataset. Lastly, we ran this code to check the elections date:
+
+```{r, echo=TRUE}
+election_data_tidy |> 
+  group_by(anno, mes) |> 
+  summarise()
+```
+
+------------------------------------------------------------------------
+
+With this code, we realize that, in 2019, there were two elections. Thus, to avoid later addition problems, we create the variable annomes, in order to account for this problem.
+
+```{r, echo=TRUE}
+#| message: false
+#| eval: true
+#| echo: true
+#| code-fold: true
+
+election_data_tidy <- election_data_tidy |> 
+  mutate(mes = as.numeric(mes)) |> 
+  mutate(annomes = paste0(anno, sprintf("%02d", mes)))
+
+election_data_tidy <- election_data_tidy |> 
+  select(anno, mes, annomes, everything())
+
+head(election_data_tidy)
+
+```
+
+------------------------------------------------------------------------
+
+## Questions
+
+### Which party was the winner in the municipalities with more than 100,000 habitants (census) in each of the elections?
+
+Here, we first filter the election data for municipalities with a census greater than 100,000. Then, we calculate the total votes for each party, and identify the party with the highest votes per municipality and election period.
+
+```{r}
+#| message: false
+#| eval: true
+#| echo: true
+#| code-fold: true
+
+
+library(dplyr)
+
+winners <- election_data_tidy |> 
+    filter(censo > 100000) |> 
+    group_by(annomes, cod_mun, partido) |>  
+    summarise(total_votes = sum(votos, na.rm = TRUE), .groups = 'drop') |> 
+    group_by(annomes, cod_mun) |> 
+    slice_max(total_votes, n = 1, with_ties = FALSE) |>  
+  arrange(desc(total_votes))
+
+print(winners)
+```
+
+------------------------------------------------------------------------
+
+Since the results table is a little messy to interpret, we will count how many times each party has won in municipalities with over 100,000 habitants.
+
+```{r}
+#| message: false
+#| eval: true
+#| echo: true
+#| code-fold: true
+
+
+party_counts <- winners |> 
+  group_by(partido, annomes) |>                
+  summarise(overall_wins = n()) |>      
+  arrange(desc(overall_wins))           
+
+print(party_counts)
+
+```
+
+------------------------------------------------------------------------
+
+Here, it is easier to outline the performance of political parties. The PP achieved its highest recorded win (39) in big cities in November 2011, followed by 36 in June 2016 and 27 in December 2015. Similarly, the PSOE reached its highest (38 wins) in April 2019 and secured 32 wins in November 2019 in big municipalities. Minor parties, like Unidas Podemos and other parties, also reached high results during December 2015, with 11 and 8 wins, respectively. It could be concluded that the results show the political shift in Spain after the 15M movement.
+
+------------------------------------------------------------------------
+
+### Which party was the second when the first was the PSOE? And when the first was the PP?
+
+::: panel-tabset
+## **Code**
+
+First, we need to ensure that OTHERS is represented in the variable siglas, and make sure that NAs are coded as such.
+
+```{r}
+#| message: false
+#| eval: true
+#| echo: true
+#| code-fold: true
+
+
+election_data_tidy <- election_data_tidy %>%
+    mutate(siglas = ifelse(is.na(siglas), "OTHERS", siglas))
+```
+
+## **Code 2**
+
+Then, for the PSOE, the data are grouped by date (year-month), municipality and party, adding up the votes and sorting by totals. The result is filtered to obtain the municipality and date where the PSOE is the first party, and then the second most voted party in those same municipalities is identified. Then, the process is repeated for the PP, performing the same analysis but focusing on the PP as the first party. Finally, the code shows how many times each party was the second most voted party in these contexts.
+
+```{r}
+#| message: false
+#| eval: true
+#| echo: true
+#| code-fold: true
+
+
+first_psoe <- election_data_tidy %>%
+    group_by(annomes, cod_mun, partido) %>%
+    summarise(total_votes = sum(votos, na.rm = TRUE)) |> 
+                  arrange(desc(total_votes)) |> 
+                  mutate(rank = row_number()) |> 
+                  filter(rank == 1 & partido == "PARTIDO SOCIALISTA OBRERO ESPAÑOL") |> 
+                  ungroup()
+
+second_party_when_psoe_first <- election_data_tidy %>%
+  semi_join(first_psoe, by = c("annomes", "cod_mun")) %>%  
+  group_by(annomes, cod_mun, partido) %>%
+  summarise(total_votes = sum(votos, na.rm = TRUE)) %>%
+  arrange(desc(total_votes)) %>%  
+  mutate(rank = row_number()) %>%
+  filter(rank == 2) %>%
+  ungroup() %>%
+  count(partido, name = "times_second", sort = TRUE)
+
+first_pp <- election_data_tidy %>%
+    group_by(annomes, cod_mun, partido) %>%
+    summarise(total_votes = sum(votos, na.rm = TRUE)) %>%
+                  arrange(desc(total_votes)) %>%
+                  mutate(rank = row_number()) %>%
+                  filter(rank == 1 & partido == "PARTIDO POPULAR") %>%
+                  ungroup()
+
+second_party_when_pp_first <- election_data_tidy %>%
+  semi_join(first_pp, by = c("annomes", "cod_mun")) %>%
+  group_by(annomes, cod_mun, partido) %>%
+  summarise(total_votes = sum(votos, na.rm = TRUE)) %>%
+  arrange(desc(total_votes)) %>%  
+  mutate(rank = row_number()) %>%
+  filter(rank == 2) %>%
+  ungroup() %>%
+  count(partido, name = "times_second", sort = TRUE)
+
+print(second_party_when_pp_first)
+print(second_party_when_psoe_first)
+```
+
+------------------------------------------------------------------------
+
+## **Text**
+
+The first table shows the parties that were the second most voted in the municipalities where the Partido Popular (PP) was the first party in the elections. The Partido Socialista Obrero Español (PSOE) is the party that ranked second most times, with 20,352 occasions, followed by Unidas Podemos with 1,804. Regional parties such as Euskal Herria Bildu (119), Bloque Nacionalista Galego (57) and Euzko Alderdi Jeltzalea-PNV (39) have a significantly lower number of times they were the second party.
+
+When the Partido Socialista Obrero Español (PSOE) is the most voted party, the Partido Popular (PP) is the second most voted party on 10,934 occasions. United Podemos follows with 1,040, showing a significant presence. VOX and Ciudadanos also appear as the second most voted in several municipalities, with 680 and 649 occasions respectively.
+
+This suggests that bipartidism in Spain is still a key component of the electoral procces, and that there are some regional dynamics that influence electoral support.
+
+## **Visualization**
+
+```{r}
+#| message: false
+#| eval: true
+#| echo: true
+#| code-fold: true
+
+second_party_all <- bind_rows(
+  second_party_when_psoe_first %>% mutate(first_party = "PSOE"),
+  second_party_when_pp_first %>% mutate(first_party = "PP")) 
+
+second_party_all <- second_party_all %>% left_join(abbrev_unique, by = c("partido" = "denominacion")) %>% mutate(siglas = ifelse(is.na(siglas), "OTHERS", siglas))
+
+colores_partidos <- c(
+  "PP" = "#004a95",
+  "PSOE" = "#e30613",
+  "OTHERS" = "#100F0F",
+  "CIU" = "#727dff",
+  "PODEMOS-EUP" = "#782c67",
+  "ERC" = "#ffbf41",
+  "EAJ-PNV" = "#008035",
+  "BNG" = "#d41c54",
+  "EH-BILDU" = "#04ccb4",
+  "C's" = "#fc5204",
+  "M PAÍS" = "#0a7262",
+  "VOX" = "#5ac035"
+)
+
+ggplot(second_party_all, aes(axis1 = first_party, axis2 = siglas, y = times_second)) +
+  geom_alluvium(aes(fill = siglas), width = 1/12, alpha = 0.7) + 
+  geom_stratum(width = 1/12, fill = "lightgray", color = "black") +  
+  geom_text(stat = "stratum", aes(label = after_stat(stratum)), size = 2, color = "black", fill) +  
+  labs(
+    title = "Relations between First and Second Place Parties (PSOE and PP)",
+    fill = "Party"
+  ) +
+  scale_fill_manual(values = colores_partidos) +
+  theme_minimal() + 
+  theme(
+    axis.title.x = element_blank(),  
+    axis.title.y = element_blank(), 
+    axis.text.x = element_blank(),   
+    axis.text.y = element_blank(),   
+    plot.title = element_text(size = 14, face = "bold", hjust = 0.5),  
+    plot.subtitle = element_text(size = 10, hjust = 0.5, color = "gray"),  
+    legend.title = element_text(size = 10),  
+    legend.text = element_text(size = 9), 
+    strip.text = element_text(size = 8),  
+    panel.grid = element_blank(), 
+    panel.border = element_blank()  
+  )
+
+```
+:::
+
+------------------------------------------------------------------------
+
+### Who benefits from low turnout?
+
+The first step is to calculate the turnout in each municipality for each election.
+
+```{r}
+#| message: false
+#| eval: true
+#| echo: true
+#| code-fold: true
+
+
+turnout <- election_data_tidy %>%
+    group_by(annomes, cod_mun) %>%
+    mutate(total_votes = sum(votos, na.rm = TRUE)) %>%
+    ungroup() %>%
+    mutate(turnout = total_votes / censo)
+
+```
+
+According to the Spanish Ministry of Internal Affais, the average participation in the Spanish general elections has been around 70%. Therefore, we will be considering low turnout as less than 55% of votes regarding the census.
+
+------------------------------------------------------------------------
+
+```{r}
+#| message: false
+#| eval: true
+#| echo: true
+#| code-fold: true
+
+party_wins_low_turnout <- turnout %>%
+  group_by(annomes, cod_mun) %>%
+ filter(turnout < 0.55) %>% 
+slice_max(votos) %>%  
+ ungroup() %>%
+ count(partido, name = "times_win_low_turnout", sort = TRUE)
+
+party_wins_low_turnout 
+
+```
+
+The results show that Partido Popular and PSOE (bipartidism parties) are the most benefited from low turnout with 237 and 151 wins respectively. They are followed by regional parties from the País Vasco, with 90 wins for PNV and 87 wins for EH-Bildu.
+
+Overall, the outcome indicates that larger, well-established parties have achieved more victories compared to smaller/newer parties.
+
+------------------------------------------------------------------------
+
+### How to analyze the relationship between census and vote? Is it true that certain parties win in rural areas?
+
+The first step to examine this relationship is to look at the correlation between variables. It is important to note that this does not imply causality, but it does give us an indication of how the variables are related to each other.
+
+```{r}
+#| message: false
+#| eval: true
+#| echo: true
+#| code-fold: true
+
+#New variable to calculate the proportion of votes
+election_data_tidy <- election_data_tidy |> 
+  mutate(proporcion_votos = votos / censo)  
+
+#Correlation Coefficient with absolute values
+cor(election_data_tidy$censo, election_data_tidy$votos, use = "complete.obs")
+
+#Correlation Coefficient with the proportion
+cor(election_data_tidy$censo, election_data_tidy$proporcion_votos, use = "complete.obs")
+
+```
+
+The correlation of 0.55 between the census and total votes indicates a moderate positive relationship. This is expected, as a higher number of people registered in a region tends to be associated with a higher number of votes. However, this relationship is not perfectly linear, suggesting that other factors also influence the total number of votes.
+
+------------------------------------------------------------------------
+
+On the other hand, the correlation of -0.0026 between the census and the proportion of votes indicates a virtually non-existent relationship. This suggests that, once the number of votes is normalized by the size of the census, the population size no longer becomes a determining factor.
+
+To visually represent this relationship, we created a graph.
+
+```{r}
+#| message: false
+#| eval: false
+#| echo: true
+#| code-fold: true
+
+
+ggplot(election_data_tidy, aes(x = censo, y = proporcion_votos, color = as.factor(annomes))) +
+  geom_line(alpha = 0.6) +  
+  geom_point(alpha = 0.6, size = 1) +  
+  labs(
+    title = "Relationship Between Census Size and Vote Proportion",
+    x = "Census Size",
+    y = "Vote Proportion",
+    color = "Year"
+  ) +
+  scale_color_brewer(palette = "Set1") +  
+  theme_minimal()
+
+```
+
+------------------------------------------------------------------------
+
+Continuing to address the question regarding rural areas, we will use the National Geographic Institute as a reference, which defines population centers with more than 10,000 inhabitants as cities. Therefore, we begin by creating a new variable to classify municipalities as either rural or urban.
+
+```{r}
+#| message: false
+#| eval: true
+#| echo: true
+#| code-fold: true
+
+#New variable:
+election_data_tidy <- election_data_tidy |> 
+  mutate(categoria_region = ifelse(censo < 10000, "Rural", "Urbano"))
+
+#Total votes per party:
+resultados_rurales <- election_data_tidy |> 
+  group_by(categoria_region, partido, siglas) |> 
+  summarise(votos_totales = sum(votos)) |> 
+  arrange(categoria_region, -votos_totales)
+
+print(resultados_rurales)
+```
+
+---
+
+When examining the total votes by party in rural areas, we observe that the Partido Popular (PP) has been the most voted, surpassing the Partido Socialista Obrero Español (PSOE) by over a million votes, a significant difference. However, the most noteworthy aspect is the dominance of these two parties compared to others, which were less significant until 2015. On the other hand, it is worth noting that if we also consider the results from urban areas, we observe a similar trend.
+
+------------------------------------------------------------------------
+
+For a deeper analysis, it is necessary to examine the differences between these parties across various elections.
+
+```{r}
+#| message: false
+#| eval: true
+#| echo: true
+#| code-fold: true
+
+#Results per election and party in the rural area
+resultados_rural_por_eleccion <- election_data_tidy %>%
+  group_by(annomes, categoria_region, partido, siglas) %>%
+  summarise(votos_totales = sum(votos), .groups = "drop") %>%
+  filter(categoria_region == "Rural") %>%
+  arrange(annomes, -votos_totales)
+
+print(resultados_rural_por_eleccion)
+```
+
+---
+
+The results confirm that traditional parties like the Partido Popular (PP) and the Partido Socialista Obrero Español (PSOE) consistently dominate the rural vote in Spain. The PP led in most elections, particularly in 2008, 2011, 2015, and 2016, showcasing strong support in rural areas. However, in the 2019 elections, significant changes emerged. In April 2019, PSOE overtook PP as the leading party in rural areas, reflecting a shift in voter preference. Additionally, VOX gained considerable ground in 2019, especially in the November election, becoming the third most voted party and surpassing more established regional and national parties. These results highlight the evolving political dynamics in rural areas, where traditional dominance is occasionally challenged by emerging parties.
+
+------------------------------------------------------------------------
+
+We will represent this graphically to visually observe these differences and attempt to identify other trends.
+
+```{r}
+#| message: false
+#| eval: true
+#| echo: true
+#| code-fold: true
+
+# Colors for each party
+colores_partidos <- c(
+  "PARTIDO POPULAR" = "#004a95",
+  "PARTIDO SOCIALISTA OBRERO ESPAÑOL" = "#e30613",
+  "OTHERS" = "#100F0F",
+  "CONVERGENCIA I UNIO" = "#727dff",
+  "UNIDAS PODEMOS" = "#782c67",
+  "ESQUERRA REPUBLICANA DE CATALUNYA" = "#ffbf41",
+  "EUZKO ALDERDI JELTZALEA-PARTIDO NACIONALISTA VASCO" = "#008035",
+  "BLOQUE NACIONALISTA GALEGO" = "#d41c54",
+  "EH-BILDU" = "#04ccb4",
+  "CIUDADANOS-PARTIDO DE LA CIUDADANIA" = "#fc5204", # Fixed name
+  "MÁS PAÍS" = "#0a7262",
+  "VOX" = "#5ac035"
+)
+
+library(ggplot2)
+
+ggplot(resultados_rural_por_eleccion, aes(x = factor(annomes), y = votos_totales, fill = partido)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  scale_fill_manual(values = colores_partidos) +  # Use the named vector here
+  labs(title = "Votos por partido en áreas rurales (2008-2019)", 
+       x = "Elecciones", y = "Votos Totales") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+------------------------------------------------------------------------
+
+The plot highlights the consistent dominance of the Partido Popular (PP) and Partido Socialista Obrero Español (PSOE) in rural areas. From 2008 to 2016, the PP emerges as the clear leader, particularly in 2011, where it reached its highest vote count in rural areas. The PSOE maintained a competitive position, often coming in second. However, 2019 marks a turning point, as the PSOE surpasses the PP in the April election, showcasing a shift in voter preferences.
+
+Furthermore, the trend illustrates the gradual decline of bipartisanship. Until 2015, the concentration of votes was primarily shared between PP and PSOE, reflecting a strong two-party system. From 2015 onward, the vote distribution becomes more diverse, with emerging parties like Unidas Podemos, Ciduadanos and later, VOX gaining significant traction, especially in the 2019 November election. The presence of regional parties, such as Esquerra Republicana de Catalunya and others, remains relatively stable but secondary compared to the national parties.
+
+---
+
+This evolving dynamic underlines the changing political landscape in rural Spain, with new actors challenging the traditional dominance of PP and PSOE. It is also necessary to mention that the "Others" category, which aggregates votes from various smaller parties (PACMA, La Falange...), starts to show significant relevance from 2016 onward. However, it is important to note that this category represents the sum of many smaller parties, which can fluctuate over time and dilute the overall impact of any single party in this group.
+
+------------------------------------------------------------------------
+
+### How to calibrate the error of the polls (remember that the polls are voting intentions at national level)?
+
+First we need to calculate the percentage of each party in the elections:
+
+```{r}
+#| message: false
+#| eval: true
+#| echo: true
+#| code-fold: true
+
+
+#Calculate the total valid votes per year
+election_data_tidy <- election_data_tidy %>%
+  mutate(votos_validos = votos_candidaturas + votos_blancos) #party votes + blank votes
+
+#Now we can calculate the percentage of votes per party
+election_data_nacional <- election_data_tidy %>%
+  group_by(anno, annomes, partido, siglas) %>%
+  summarise(votos_totales = sum(votos), votos_validos_totales = sum(votos_validos)) %>%
+  mutate(porcentaje_votos_nacional = (votos_totales / votos_validos_totales) * 100)
+
+# Preparing the data for joining
+surveys_tidy <- surveys_tidy %>%
+  rename(siglas = partido) %>%
+  mutate(date_elec = year(date_elec)) %>%  
+  filter(date_elec >= 2008)  
+
+comparacion <- left_join(election_data_nacional, surveys_tidy, by = c("siglas", "anno" = "date_elec"))
+
+```
+
+The first step to calibrate the error is to calculate the absolute error between the percentage obtained by the parties and the voting intention in the surveys.
+
+```{r}
+#| message: false
+#| eval: true
+#| echo: true
+#| code-fold: true
+
+#Calculation of error
+comparacion <- comparacion %>%
+  mutate(error_absoluto = abs(porcentaje_votos_nacional - voto_intencion))
+
+#The Root Mean Square Error (RMSE), a common measure of this difference, can also be calculated by squaring the differences, averaging them, and taking the square root.
+rmse <- sqrt(mean((comparacion$porcentaje_votos_nacional - comparacion$voto_intencion)^2, na.rm = TRUE))
+
+print(rmse)
+```
+
+The RMSE is 3.35, this means that on average, the difference between the predicted voting intentions from the polls and the election results is 3.35 percentage points.
+
+------------------------------------------------------------------------
+
+### Which polling houses got it right the most and which ones deviated the most from the results?
+
+To answer this question, I will calculate the RMSE by polling house.
+
+```{r}
+#| message: false
+#| eval: true
+#| echo: true
+#| code-fold: true
+
+rmse_por_encuestadora <- comparacion |> 
+  group_by(pollster) |> 
+  summarise(rmse_pollster = sqrt(mean((porcentaje_votos_nacional - voto_intencion)^2, na.rm = TRUE))) |> 
+  arrange(rmse_pollster) #Sort the polling houses from lowest to highest RMSE
+
+print(rmse_por_encuestadora)
+```
+
+We can see differences in accuracy among the polling houses. Those that have made the least errors are METRA SEIS with an RMSE of 0.76, APPEND with 1.89, and TOP POSITION with 2.22. On the other hand, the polling houses with the highest errors are DYM with an RMSE of 4.83, DEMOMÉTRICA with 5.16, and ASEP with 5.36.
+
+------------------------------------------------------------------------
+
+We will represent the polling houses in such a way that those with an RMSE greater than 3.35 will appear in red, and the others in blue. As we saw earlier, the overall RMSE for all polling houses was 3.35, so I will highlight the polling houses with an RMSE above this value in red, indicating that their predictions were less accurate.
+
+```{r}
+#| message: false
+#| eval: true
+#| echo: true
+#| code-fold: true
+
+rmse_por_encuestadora <- rmse_por_encuestadora %>%
+  mutate(color = ifelse(rmse_pollster > 3.35, "red", "lightblue"))
+
+rmse_por_encuestadora %>% filter(color == "red") %>% count()
+
+```
+
+---
+
+```{r}
+#| message: false
+#| eval: true
+#| echo: true
+#| code-fold: true
+
+#Plot:
+ggplot(rmse_por_encuestadora, aes(x = reorder(pollster, rmse_pollster), y = rmse_pollster, fill = color)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  labs(title = "RMSE por encuestadora",
+       x = "Encuestadora",
+       y = "RMSE") +
+  scale_fill_identity() +
+  theme_minimal() +
+  theme(
+    axis.text.y = element_text(size = 6.5)
+  )
+
+```
+
+The plot shows that there are 20 polling houses with an RMSE greater than 3.35. However, the majority of polling houses fall below this value.
+
+------------------------------------------------------------------------
+
+For a deeper analysis, we can examine which were the three polling houses that deviated the most from the results in each election.
+
+```{r}
+#| message: false
+#| eval: true
+#| echo: true
+#| code-fold: true
+
+error_por_encuestadora_anno <- comparacion %>%
+  group_by(annomes, pollster) %>%
+  summarise(mean_error = mean(error_absoluto, na.rm = TRUE)) %>%
+  arrange(annomes, desc(mean_error))
+
+# Select the 3 polling houses with the highest error in each election
+top3_desviaciones <- error_por_encuestadora_anno %>%
+  group_by(annomes) %>%
+  slice_max(order_by = mean_error, n = 3)
+
+print(top3_desviaciones)
+
+```
+
+------------------------------------------------------------------------
+
+In summary, the polling house with the highest error is ASEP in 2011, with an error of 11.72, marking a significant deviation from the actual results. Other notable polling houses include INVYMARK in 2019, with an error of 5.15, and DEMOMÉTRICA in 2008, with an error of 4.50. Some polling houses appear consistently with relatively high errors. For example, INVYMARK stands out for its repeated presence in 2008, 2011, and 2019, with high error rates in each of those years. Similarly, METROSCOPIA appears multiple times, including in 2015 with an error of 4.33. Polling houses such as SIMPLE LÓGICA and DYM also show recurring presence in years like 2011 and 2016, indicating a pattern of notable deviations across different elections.
+
+------------------------------------------------------------------------
+
+## Original questions
+
+### Create a function that returns, as an outcome, the ranking of parties by number of votes in each CCAA and election. Then, put it to test with some examples.
+
+```{r}
+#| message: false
+#| eval: true
+#| echo: true
+#| code-fold: true
+
+ranking_ccaa <- function(ccaa, annomes) {
+  election_data_tidy |> 
+    filter(ccaa == !!ccaa, annomes == !!annomes) |> 
+    group_by(partido) |> 
+    summarise(votos_totales = sum(votos, na.rm = TRUE), .groups = "drop") |> 
+    filter(votos_totales > 0) |> 
+    arrange(desc(votos_totales))
+}
+```
+
+The inputs of this custom function are the autonomous region of interest, and the grouped variable "annomes" which identifies the year and month of each election. This function is only applied to our table election_data_tidy, which has all of the information we need in the format we have given it. We filtered out the parties that had 0 votes, because we assume that they did not run for election that year and/or in that CCAA. The output is a table with the names of the parties and the total votes in said region, in descending order.
+
+------------------------------------------------------------------------
+
+We can now test our function for the following questions:
+
+-   **What was the most voted party in the 2008 elections in Andalucía?**
+
+```{r}
+#| message: false
+#| eval: true
+#| echo: true
+#| code-fold: true
+
+ranking_ccaa("Andalucía", 200803)
+```
+
+It was PSOE, with 2,312,900 votes.
+
+-   **And the second most voted in 2011 in País Vasco?**
+
+```{r}
+#| message: false
+#| eval: true
+#| echo: true
+#| code-fold: true
+
+ranking_ccaa("País Vasco", 201111)
+```
+
+EH-Bildu, with about 40,000 less votes than the first party, PNV.
+
+------------------------------------------------------------------------
+
+-   **And the least voted in Comunitat Valenciana, in 2015?**
+
+```{r}
+#| message: false
+#| eval: true
+#| echo: true
+#| code-fold: true
+
+ranking_ccaa("Comunitat Valenciana", 201512)
+```
+
+It was Vox, with 7,240 votes.
+
+-   **Did the order of the parties in the ranking change much in Extremadura from the first to the second elections in 2019?**
+
+```{r}
+#| message: false
+#| eval: true
+#| echo: true
+#| code-fold: true
+
+ranking_ccaa("Extremadura", 201904)
+ranking_ccaa("Extremadura", 201911)
+```
+
+In this case, the first and second most voted parties (PSOE and PP) remained in place, but Ciudadanos fell from 3rd to 5th place, leading Vox and UP to move up one position in the ranking, from 4th to 3rd and 5th to 4th respectively.
+
+------------------------------------------------------------------------
+
+### Similarly, create a function to explore the evolution of a party in a given region throughout all of the elections in the dataset, and use it to analyse the evolution of the party Vox in the Autonomous Community of Madrid.
+
+```{r}
+#| message: false
+#| eval: true
+#| echo: true
+#| code-fold: true
+
+evolution_ccaa <- function(ccaa, siglas) {
+  election_data_tidy |> 
+    filter(ccaa == !!ccaa, siglas == !!siglas) |> 
+    group_by(annomes) |> 
+    summarise(votos_totales = sum(votos, na.rm = TRUE),
+              votos_validos = sum(votos_validos, na.rm = TRUE),
+              porcentaje = (votos_totales / votos_validos) * 100, .groups = "drop") |> 
+    arrange(annomes)
+}
+```
+
+The inputs of the function are the CCAA and the abbreviation of the party's name (siglas), since it is more straightforward and reproduceable than the complete name. The output is a table that displays the year and month of the election, the total votes for that party, the amount of valid votes, and the percentage of votes for that party, in the CCAA selected.
+
+------------------------------------------------------------------------
+
+```{r}
+#| message: false
+#| eval: true
+#| echo: true
+#| code-fold: true
+
+evolution_ccaa("Madrid", "VOX")
+```
+
+------------------------------------------------------------------------
+
+The table generated with our custom function allows us to observe the electoral evolution of Vox. The party received no votes in the 2008 and 2011 elections, which indicates that it was founded between 2011 and 2015: it did not exist for the first two year of our dataset. In 2015, its first year running for election, Vox obtained 22,456 votes, which meant a 0.63% of the total valid votes. The party's results declined a little in the 2016 elections, receiving about 6,000 less votes, which translates into a 0.48% of the total votes. In Spain's electoral system there's an electoral threshold of 3%: this means that parties must gather at least 3% of the total votes in order to gain representation in Congress. In that sense, Vox had a considerable blowout in April of 2019, when it entered the Congress with almost 14% of the people's votes. The elections had to be repeated seven months later due to the lack of majorities needed to form a government. The November elections only served to consolidate the position of the far-right formation in the Spanish party system.
+
+------------------------------------------------------------------------
+
+### What are the 10 municipalities with the higher average turnout across all elections? And with the lower?
+
+Given that we have the voting information broken down to the level of municipalities, we might also ask questions related to these entities.
+
+```{r}
+#| message: false
+#| eval: true
+#| echo: true
+#| code-fold: true
+
+election_data_tidy |> 
+  distinct(municipio, provincia, ccaa, censo, annomes, votos_validos) |>  # Eliminate duplicates
+  group_by(municipio, provincia, ccaa) |> 
+  summarise(poblacion_media = mean(censo),
+            participacion_media = mean(votos_validos / censo, na.rm = TRUE) * 100, 
+            .groups = "drop") |> 
+  arrange(desc(participacion_media)) |> 
+  slice_head(n = 10)
+
+```
+
+------------------------------------------------------------------------
+
+```{r}
+#| message: false
+#| eval: true
+#| echo: true
+#| code-fold: true
+
+election_data_tidy |> 
+  distinct(municipio, provincia, ccaa, censo, annomes, votos_validos) |>  # Eliminate duplicates
+  group_by(municipio, provincia, ccaa) |> 
+  summarise(poblacion_media = mean(censo),
+            participacion_media = mean(votos_validos / censo, na.rm = TRUE) * 100, 
+            .groups = "drop") |> 
+  arrange(participacion_media) |> 
+  slice_head(n = 10)
+
+```
+
+It's interesting to note that the 10 municipalities with the highest average turnout across all elections in the dataset belong to only four different Autonomous Regions: Castilla-La Mancha, La Rioja, Castilla y León, and Aragón. In the top two cases, the average participation of 100% in all six elections is outstanding. However, if we look at the average population in each municipality across all election years, we observe that all of them have fewer than 30 inhabitants, which likely partly explains the high participation (the mean was considered an appropriate metric because the population is unlikely to have experienced large variations over 10 years).
+
+---
+
+Regarding the municipalities with the lowest turnout, we must stress that low voter turnout is a context-specific phenomenon that varies significantly across regions, elections, and time periods. Participation in elections can be influenced by many complex factors. That being said, it is striking that the top four cases belong to the same Autonomous Region, Navarra. Of the other regions included in the ranking, it is remarkable that three also correspond to the north of Spain, along with Navarra.
+
+------------------------------------------------------------------------
+
+The other Autonomous Region represented here is Canarias, which accounts for two of the 10 municipalities with the lowest average turnout in elections. As expected, the average population of these municipalities is not as low as in the previous case, although all of them qualify as rural according to the criteria used earlier. The municipalities in this ranking are far more heterogeneous in terms of population. Most have more than 150 inhabitants, and three have more than 1,000.
+
+These results further strengthen the point made in a previous exercise that voter turnout does not have a clear correlation with population. They also hint that participation in elections results from a mixture of geographical, economic, cultural, social, and political factors that interact in intricate ways.
+
+------------------------------------------------------------------------
+
+### Which is the autonomous community with the highest proportion of invalid votes with respect to the total number of votes across all the elections and how does this compare with the turnout?
+
+::: panel-tabset
+### [**Turnout**]{.hl-yellow}
+
+To answer the question, by grouping the data by year, month, type of election, and geographic codes, we calculate the total number of vote within each group.Additionally, we compute the turnout by dividing the total votes by the census size.
+
+```{r}
+#| message: false
+#| eval: true
+#| echo: true
+#| code-fold: true
+
+turnout <- election_data_tidy |> 
+    group_by(anno, mes, tipo_eleccion, municipio,ccaa, provincia) |> 
+    mutate(total_votes = sum(votos, na.rm = TRUE)) |> 
+    ungroup() |> 
+    mutate(turnout = total_votes / censo)
+```
+
+### [**Total null**]{.hl-yellow}
+
+By regrouping the data by autonomous community and year, we calculated the total votes and null votes. Additionally, we determined the average participation rate as the ratio of total votes to the census size for each community and year, providing an overall measure of voter engagement. The results are then sorted in descending order of this proportion, allowing for an easy identification of the communities with the highest rates of invalid votes.
+
+```{r}
+#| message: false
+#| eval: true
+#| echo: true
+#| code-fold: true
+
+tasa_votos_nulos <- election_data_tidy %>%
+    group_by(ccaa, anno) %>%
+    summarise(
+        votos_nulos = sum(votos_nulos, na.rm = TRUE),
+        total_votos = sum(votos, na.rm = TRUE),
+        participacion_media = total_votos / sum(censo, na.rm = TRUE)
+    ) %>%
+    mutate(
+        tasa_nulos = votos_nulos / total_votos
+    ) %>%
+    arrange(desc(tasa_nulos))
+
+```
+
+### [**Results**]{.hl-yellow}
+
+Finally, we identified the community with the highest proportion of invalid votes and the turnout.
+
+```{r}
+#| message: false
+#| eval: true
+#| echo: true
+#| code-fold: true
+
+comunidades_extremos <- tasa_votos_nulos %>%
+    filter(tasa_nulos== max(tasa_nulos) | tasa_nulos == min(tasa_nulos))
+
+library(glue)
+
+glue("The autonomous community with the highest rate of null votes in all elections is {comunidades_extremos$ccaa[1]}, with a rate of {comunidades_extremos$tasa_nulos[1]} and turnout of {comunidades_extremos$participacion_media[1]}, recorded in the elections of {comunidades_extremos$anno[1]}.")
+
+```
+
+### [**View**]{.hl-yellow}
+
+```{r}
+#| message: false
+#| eval: true
+#| echo: true
+#| code-fold: true
+
+library(ggrepel)
+
+ggplot(tasa_votos_nulos, aes(x = participacion_media, y = tasa_nulos, color = as.factor(anno), label = ccaa)) +
+    geom_point(alpha = 0.7, size = 3) +  
+    ggrepel::geom_text_repel(size = 3, box.padding = 0.5, max.overlaps = 10) +  
+    labs(title = "Participation Rate vs Proportion of Null Votes",
+         x = "Participation Rate",
+         y = "Proportion of Null Votes",
+         color = "Year") +  
+    scale_color_viridis_d() +  
+    theme_minimal() +  
+    theme(legend.position = "bottom") +  
+    geom_smooth(method = "lm", se = FALSE, color = "red", linetype = "dashed") 
+```
+:::
+
+------------------------------------------------------------------------
+
+### How voting intention affects turnout by media type?
+
+::: panel-tabset
+### [**Media type**]{.hl-yellow}
+
+Media types shape how voting intention affects turnout. Let's first classify the media into different groups based on the media outlet. This categorization helps us group the data by media type for further analysis.
+
+```{r}
+#| message: false
+#| eval: true
+#| echo: true
+#| code-fold: true
+
+library(forcats)
+
+surveys_tidy <- surveys_tidy %>%
+  mutate(tipo_medio = case_when(
+    media %in% c("EL PAÍS", "ABC", "LA VANGUARDIA", "EL MUNDO", "LA RAZÓN", "LA GACETA", "MEDITERRÁNEO", "DIARIO 16", "CADENA SER", "COPE", "ESRADIO") ~ "Press", 
+    media %in% c("TELECINCO", "ANTENA 3", "LA SEXTA", "RTVE-FORTA", "13TV", "MEDIASET") ~ "Television",
+    media %in% c("ELDIARIO.ES", "OKDIARIO", "LA VANGUARDIA", "PÚBLICO", "EL ESPAÑOL", "INFOLIBRE", "EL CONFIDENCIAL", "ESDIARIO", "EL PERIÓDICO", "20MINUTOS") ~ "Digital press",
+    media %in% c("EUROPA PRESS", "COLPISA", "CEMOP", "GETS", "AGENCIA LID") ~ "Agencies",
+    media %in% c("PSOE", "PP") ~ "Political Parties",
+    TRUE ~ "Others"
+  ),
+    tipo_medio = fct_relevel(tipo_medio, "Press",  "Digital press", "Agencies", "Television", "Political Parties", "Others")
+  )
+```
+
+### [**Avg. turnout**]{.hl-yellow}
+
+Once we have the different media groups, we will we will prepare and analyzing survey data to understand how the voting intention affect turnout rate depending on the media type the survey was conducted. For this, we process survey data by extracting the year and month from `field_date_from` and combining them into `clave_fecha_encuesta`. Filtering surveys from 2008 to 2019, we group data by media type, size, year, month, and voting intention, calculating the average turnout for each group.
+
+```{r}
+#| message: false
+#| eval: true
+#| echo: true
+#| code-fold: true
+
+surveys_tidy <- surveys_tidy %>%
+  mutate(
+    anno_encuesta = year(field_date_from),
+    mes_encuesta = month(field_date_from),  
+    clave_fecha_encuesta = paste(anno_encuesta, mes_encuesta, sep = "-")  
+  )
+
+participacion_media <- surveys_tidy %>%
+  filter(anno_encuesta >= "2008" & anno_encuesta <= "2019") %>% 
+  group_by(tipo_medio, size, anno_encuesta, mes_encuesta, voto_intencion) %>%
+  summarise(
+    participacion_promedio = mean(turnout, na.rm = TRUE)
+  ) %>%
+  ungroup()
+
+participacion_media
+```
+
+### [**View**]{.hl-yellow}
+
+```{r}
+#| message: false
+#| eval: true
+#| echo: true
+#| code-fold: true
+
+ggplot(participacion_media, aes(x = voto_intencion, y = participacion_promedio, color = tipo_medio)) +
+  geom_point(alpha = 0.1, size = 1) + 
+  geom_smooth(method = "lm", se = FALSE, linetype = "solid", size = 1.2) +  
+  facet_wrap(~ tipo_medio) +
+  labs(
+    title = "Voting intention vs. tournout rate",
+    subtitle = "Analysis of surveys by year and media (2008-2019)",  
+    x = "Voting intention (%)",
+    y = "Tournout rate (%)",
+    color = "Media type"
+  ) +
+  scale_color_brewer(palette = "Dark2") +  
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1), 
+    axis.text.y = element_text(size = 10),
+    axis.title = element_text(size = 12, face = "bold"),  
+    legend.position = "none",  
+    legend.title = element_text(face = "bold"),  
+    strip.text = element_text(size = 8, face = "bold") 
+  )
+```
+
+### [**Insight**]{.hl-yellow}
+
+If we interpret the results, we can conclude that:
+
+-   Press: points show a broad range of voting intention and some dispersion in average participation.The trend line is slightly downward-sloping, suggesting a small decrease in average participation as voting intention increases.
+
+-   Digital press: there is wide dispersion in terms of voting intention, but most points are concentrated at lower levels of voting intention.The trend line is almost flat, indicating no clear relationship between voting intention and average participation.
+
+-   Agencies: points are grouped along a horizontal line around 75% on the Y-axis indicating that average participation does not vary significantly regardless of the reported voting intention.
+
+## Insight 2
+
+-   Television: observations are very clustered and the line is completely horizontal showing a total absence of a relationship between the two variables.
+
+-   Others: with a significant dispersion, there is a slight positive trend in the regression line: as voting intention increases, average participation also appears to increase.
+:::
+
+------------------------------------------------------------------------
+
+# Thank you for your attention!
